@@ -45,6 +45,12 @@ Version info about the image used to run a service.  The useful stuff is in the 
 
 The most recent time when any of the tasks for a service changed state, as a unix timestamp.
 
+### `container_health_status`
+The container health-check status exposed as the `container_health_status` label for each container.
+
+### `container_status`
+The container running status exposed as the `container_status` label for each container.
+
 
 ## Example
 

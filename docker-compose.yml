@@ -2,7 +2,7 @@ version: "3.7"
 services:
 
   prometheus_exporter:
-    image: tomcatengineering/docker_swarm_exporter
+    image: ghcr.io/tardoe/docker_swarm_exporter:latest
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
     ports:
