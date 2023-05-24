@@ -7,31 +7,78 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog"
 )
 
+// Setting up the logger
+var log_output = zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
+var logger = zerolog.New(log_output).With().Timestamp().Logger()
+
 func main() {
-	dockerClient, err := client.NewEnvClient()
-	if err != nil {
-		panic(err)
+	// Set the envvar DEBUG=1 to enable debug logging.
+	if os.Getenv("DEBUG") == "1" {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	} else {
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
 
+	fmt.Println(zerolog.GlobalLevel())
+
+	// Init the docker client, use the DOCKER_HOST envvar to override the OS-default.
+	dockerClient, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+
+	if err != nil {
+		logger.Fatal().Err(err).Msgf("Error while initialising Docker client.")
+	}
+
+	// Output some useful info
+	var docker_host = os.Getenv("DOCKER_HOST")
+	if docker_host == "" {
+		docker_host = client.DefaultDockerHost
+	}
+	logger.Info().Msgf("Docker client created using socket host: %s", docker_host)
+
+	// Setup the metrics collector
 	coll := DockerServices{Client: dockerClient}
 	if err := prometheus.Register(&coll); err != nil {
-		panic(err)
+		logger.Fatal().Err(err).Msgf("Error while registering metrics collector.")
 	}
 
-	// Get rid of the stupid golang metrics
-	prometheus.Unregister(prometheus.NewGoCollector())
+	// Test connectivity to the docker daemon
+	info, err := coll.Client.Info(context.Background())
 
+	if err != nil {
+		logger.Fatal().Err(err).Msgf("Error communicating with Docker Socket.")
+	}
+
+	logger.Info().Str("OS", info.OSType+" / "+info.OperatingSystem).Str("version", info.ServerVersion).Msgf("Connected to Docker Daemon")
+
+	// Get rid of the stupid golang metrics
+	prometheus.Unregister(collectors.NewGoCollector())
+
+	// Setup the HTTP routing
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":9675", nil)
+
+	// Start the HTTP server
+	logger.Info().Msgf("Starting HTTP Server on port TCP/9675")
+	err = http.ListenAndServe(":9675", nil)
+
+	if err != nil {
+		logger.Fatal().Err(err).Msgf("Error starting HTTP server.")
+	}
 }
 
 // DockerServices implements the Collector interface.
@@ -51,6 +98,16 @@ var (
 		"swarm_service_tasks",
 		"Number of docker tasks",
 		[]string{"service_name", "state"}, nil,
+	)
+	containerHealthStatus = prometheus.NewDesc(
+		"container_health_status",
+		"Container Health Status",
+		[]string{"container_health_status", "container_name"}, nil,
+	)
+	containerStatus = prometheus.NewDesc(
+		"container_status",
+		"Container status",
+		[]string{"container_status", "container_name"}, nil,
 	)
 	imageVersion = prometheus.NewDesc(
 		"swarm_service_info",
@@ -73,15 +130,45 @@ func (c DockerServices) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect scrapes the container information from Docker.
 func (c DockerServices) Collect(ch chan<- prometheus.Metric) {
-
+	logger.Debug().Msgf("Received request for metrics.")
 	services, err := c.Client.ServiceList(context.Background(), types.ServiceListOptions{})
 	if err != nil {
-		panic(err)
+		logger.Fatal().Err(err).Msgf("Error listing Swarm Services.")
 	}
 
 	tasks, err := c.Client.TaskList(context.Background(), types.TaskListOptions{})
 	if err != nil {
-		panic(err)
+		logger.Fatal().Err(err).Msgf("Error listing Swarm Tasks.")
+	}
+
+	containers, err := c.Client.ContainerList(context.Background(), types.ContainerListOptions{})
+	if err != nil {
+		logger.Fatal().Err(err).Msgf("Error listing Docker Containers.")
+	}
+
+	for _, container := range containers {
+		container_json, err := c.Client.ContainerInspect(context.Background(), container.ID)
+		if err != nil {
+			logger.Fatal().Err(err).Msgf("Error inspecting Docker Container details.")
+		}
+
+		ch <- prometheus.MustNewConstMetric(
+			containerStatus,
+			prometheus.GaugeValue,
+			float64(1),
+			container_json.State.Status,
+			container_json.Name,
+		)
+
+		if container_json.State.Health != nil {
+			ch <- prometheus.MustNewConstMetric(
+				containerHealthStatus,
+				prometheus.GaugeValue,
+				float64(1),
+				container_json.State.Health.Status,
+				container_json.Name,
+			)
+		}
 	}
 
 	for _, service := range services {
@@ -95,7 +182,6 @@ func (c DockerServices) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		taskStates := make(map[string]int)
-		taskStates["running"] = 0 // Should really do this for all potential states (https://github.com/moby/moby/blob/v1.13.1/api/types/swarm/task.go)
 		var lastTaskStatusChange time.Time
 		for _, task := range tasks {
 			if task.ServiceID == service.ID {
@@ -131,6 +217,5 @@ func (c DockerServices) Collect(ch chan<- prometheus.Metric) {
 			float64(lastTaskStatusChange.Unix()),
 			service.Spec.Annotations.Name,
 		)
-
 	}
 }
