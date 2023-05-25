@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -31,8 +30,6 @@ func main() {
 	} else {
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
-
-	fmt.Println(zerolog.GlobalLevel())
 
 	// Init the docker client, use the DOCKER_HOST envvar to override the OS-default.
 	dockerClient, err := client.NewClientWithOpts(
