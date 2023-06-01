@@ -68,6 +68,7 @@ func main() {
 
 	// Setup the HTTP routing
 	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/status", coll.healthCheckHandler)
 
 	// Start the HTTP server
 	logger.Info().Msgf("Starting HTTP Server on port TCP/9675")
@@ -214,5 +215,14 @@ func (c DockerServices) Collect(ch chan<- prometheus.Metric) {
 			float64(lastTaskStatusChange.Unix()),
 			service.Spec.Annotations.Name,
 		)
+	}
+}
+
+func (c DockerServices) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	_, err := c.Client.ContainerList(context.Background(), types.ContainerListOptions{})
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		w.WriteHeader(http.StatusOK)
 	}
 }
