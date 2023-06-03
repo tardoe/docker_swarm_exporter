@@ -221,6 +221,7 @@ func (c DockerServices) Collect(ch chan<- prometheus.Metric) {
 func (c DockerServices) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := c.Client.ContainerList(context.Background(), types.ContainerListOptions{})
 	if err != nil {
+		logger.Error().Err(err).Msgf("Health check error.")
 		w.WriteHeader(http.StatusBadRequest)
 	} else {
 		w.WriteHeader(http.StatusOK)
