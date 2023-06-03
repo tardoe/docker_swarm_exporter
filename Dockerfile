@@ -22,4 +22,4 @@ CMD [ "/docker_swarm_exporter" ]
 
 EXPOSE 9675/tcp
 
-HEALTHCHECK --interval=30s --timeout=20s --start-period=10s --retries=3 CMD [ "wget --spider http://localhost:9675/status || exit 1" ]
+HEALTHCHECK --interval=30s --timeout=20s --start-period=10s --retries=3 CMD [ "/usr/bin/wget", "--spider", "http://localhost:9675/status" ]
